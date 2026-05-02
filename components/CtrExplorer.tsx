@@ -11,6 +11,7 @@ import {
   InputPanel,
   MetricCard,
   PEBarChart,
+  PELineChart,
   ResultsPanel,
   SegmentedControl,
   SelectInput,
@@ -23,6 +24,7 @@ import { AuthorityMap } from "@/components/AuthorityMap";
 import {
   formatPounds,
   getBillValues,
+  getEarningsCurve,
   rankAuthorities,
 } from "@/lib/calculations";
 import {
@@ -41,6 +43,10 @@ const metricOptions = [
 ];
 
 const bandOptions = BANDS.map((band) => ({ label: band, value: band }));
+
+function formatEarnings(value: number) {
+  return value === 0 ? "0" : `${Math.round(value / 1000)}k`;
+}
 
 function useStaticData() {
   const [dataset, setDataset] = useState<AuthorityDataset | null>(null);
@@ -103,6 +109,10 @@ export function CtrExplorer() {
 
   const authorities = useMemo(() => dataset?.authorities ?? [], [dataset]);
   const scenarios = useMemo(() => dataset?.scenarios ?? [], [dataset]);
+  const earningsProfiles = useMemo(
+    () => dataset?.earningsProfiles ?? [],
+    [dataset],
+  );
   const selectedAuthority = useMemo(
     () =>
       authorities.find((authority) => authority.onsCode === selectedCode) ??
@@ -122,6 +132,9 @@ export function CtrExplorer() {
     : null;
 
   const scenario = scenarios.find((item) => item.id === scenarioId);
+  const earningsProfile = earningsProfiles.find(
+    (profile) => profile.id === scenario?.earningsProfileId,
+  );
   const selectOptions = authorities.map((authority) => ({
     label: authority.authority,
     value: authority.onsCode,
@@ -139,6 +152,21 @@ export function CtrExplorer() {
         })),
     [authorities, band, metric, scenarioId],
   );
+
+  const earningsCurve = useMemo(() => {
+    if (!selectedAuthority || !scenario) {
+      return [];
+    }
+
+    return getEarningsCurve(selectedAuthority, scenario.earningsProfileId, band).map(
+      (point) => ({
+        earnings: point.earnings,
+        earningsLabel: formatEarnings(point.earnings),
+        net: Math.round(point.net),
+        reduction: Math.round(point.reduction),
+      }),
+    );
+  }, [band, scenario, selectedAuthority]);
 
   if (error) {
     return (
@@ -332,6 +360,39 @@ export function CtrExplorer() {
                   </dd>
                 </dl>
               </div>
+
+              <ChartContainer
+                title="Earnings variation"
+                subtitle={`Band ${band}, ${earningsProfile?.label ?? scenario?.label ?? ""}`}
+              >
+                {earningsCurve.length > 0 ? (
+                  <PELineChart
+                    data={earningsCurve}
+                    xKey="earningsLabel"
+                    series={[
+                      {
+                        dataKey: "net",
+                        name: "Net bill",
+                        color: "var(--chart-1)",
+                      },
+                      {
+                        dataKey: "reduction",
+                        name: "CTR",
+                        color: "var(--chart-2)",
+                      },
+                    ]}
+                    height={230}
+                    showLegend
+                    xLabel="Annual earnings"
+                    yLabel="Annual amount"
+                    formatTooltip={(value) => formatPounds(value)}
+                  />
+                ) : (
+                  <div className="flex h-[230px] items-center justify-center rounded-md border border-dashed border-border text-sm text-muted-foreground">
+                    CTR curve unavailable for this authority.
+                  </div>
+                )}
+              </ChartContainer>
 
               <ChartContainer
                 title={metric === "gross" ? "Highest gross bills" : "Highest modeled values"}

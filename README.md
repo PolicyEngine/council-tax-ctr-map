@@ -8,7 +8,7 @@ Reduction across English billing authorities.
 The app is a static Next.js export. It reads generated files in `public/data`:
 
 - `authority-results.json`: MHCLG 2026-27 council tax bands plus PolicyEngine UK
-  CTR outputs for modeled authorities and household scenarios.
+  CTR outputs for modeled authorities, household scenarios, and earnings curves.
 - `england-local-authorities.geojson`: ONS Local Authority District boundaries
   filtered to the English billing authorities in MHCLG Table 9.
 

@@ -34,6 +34,19 @@ POLICYENGINE_UK_PATH = Path(
 FISCAL_YEAR = "2026-27"
 PERIOD = 2026
 BANDS = ["A", "B", "C", "D", "E", "F", "G", "H"]
+EARNINGS_POINTS = [
+    0,
+    5_000,
+    10_000,
+    15_000,
+    20_000,
+    25_000,
+    30_000,
+    35_000,
+    40_000,
+    45_000,
+    50_000,
+]
 COUNCIL_TAX_SOURCE_PAGE = (
     "https://www.gov.uk/government/statistics/"
     "council-tax-levels-set-by-local-authorities-in-england-2026-to-2027"
@@ -45,11 +58,44 @@ BOUNDARIES_URL = (
     "&returnGeometry=true&outSR=4326&f=geojson&geometryPrecision=5"
 )
 
+EARNINGS_PROFILES = [
+    {
+        "id": "single_adult_no_savings",
+        "label": "Single adult",
+        "description": "Age 35, no savings, claims entitled benefits.",
+        "adult_earnings": 0,
+        "savings": 0,
+        "children_ages": [],
+        "would_claim_uc": False,
+    },
+    {
+        "id": "single_adult_8k_savings",
+        "label": "Single adult, GBP 8k savings",
+        "description": "Age 35, GBP 8,000 household savings.",
+        "adult_earnings": 0,
+        "savings": 8_000,
+        "children_ages": [],
+        "would_claim_uc": False,
+    },
+    {
+        "id": "lone_parent_one_child",
+        "label": "Lone parent, one child",
+        "description": (
+            "Age 35 with one child aged 4, no savings, claims UC where entitled."
+        ),
+        "adult_earnings": 0,
+        "savings": 0,
+        "children_ages": [4],
+        "would_claim_uc": True,
+    },
+]
+
 SCENARIOS = [
     {
         "id": "single_no_earnings",
         "label": "Single adult, no earnings",
         "description": "Age 35, no earnings, no savings, claims entitled benefits.",
+        "earnings_profile_id": "single_adult_no_savings",
         "adult_earnings": 0,
         "savings": 0,
         "children_ages": [],
@@ -59,6 +105,7 @@ SCENARIOS = [
         "id": "single_20k_earnings",
         "label": "Single adult, GBP 20k earnings",
         "description": "Age 35, GBP 20,000 annual employment income, no savings.",
+        "earnings_profile_id": "single_adult_no_savings",
         "adult_earnings": 20_000,
         "savings": 0,
         "children_ages": [],
@@ -68,6 +115,7 @@ SCENARIOS = [
         "id": "single_35k_earnings",
         "label": "Single adult, GBP 35k earnings",
         "description": "Age 35, GBP 35,000 annual employment income, no savings.",
+        "earnings_profile_id": "single_adult_no_savings",
         "adult_earnings": 35_000,
         "savings": 0,
         "children_ages": [],
@@ -77,6 +125,7 @@ SCENARIOS = [
         "id": "single_8k_savings",
         "label": "Single adult, GBP 8k savings",
         "description": "Age 35, no earnings, GBP 8,000 household savings.",
+        "earnings_profile_id": "single_adult_8k_savings",
         "adult_earnings": 0,
         "savings": 8_000,
         "children_ages": [],
@@ -89,6 +138,7 @@ SCENARIOS = [
             "Age 35 with one child aged 4, GBP 15,000 annual employment income, "
             "no savings, claims UC where entitled."
         ),
+        "earnings_profile_id": "lone_parent_one_child",
         "adult_earnings": 15_000,
         "savings": 0,
         "children_ages": [4],
@@ -266,6 +316,7 @@ def simulate_results(
 ) -> dict[tuple[str, str, str], dict[str, Any]]:
     CountryTaxBenefitSystem, SimulationBuilder, _ = load_policyengine_symbols()
     system = CountryTaxBenefitSystem()
+    authority_by_code = {item["onsCode"]: item for item in authority_records}
 
     people: dict[str, Any] = {}
     benunits: dict[str, Any] = {}
@@ -307,7 +358,68 @@ def simulate_results(
     results: dict[tuple[str, str, str], dict[str, Any]] = {}
     for position, key in enumerate(index):
         _, _, band = key
-        authority = next(item for item in authority_records if item["onsCode"] == key[0])
+        authority = authority_by_code[key[0]]
+        results[key] = {
+            "gross": authority["bands"][band],
+            "reduction": as_float(reductions[position]),
+            "net": as_float(net_bills[position]),
+            "supported": bool(supported[position]),
+        }
+
+    return results
+
+
+def simulate_earnings_curves(
+    authority_records: list[dict[str, Any]],
+    implemented: dict[str, dict[str, str]],
+) -> dict[tuple[str, str, str, int], dict[str, Any]]:
+    CountryTaxBenefitSystem, SimulationBuilder, _ = load_policyengine_symbols()
+    system = CountryTaxBenefitSystem()
+    authority_by_code = {item["onsCode"]: item for item in authority_records}
+
+    people: dict[str, Any] = {}
+    benunits: dict[str, Any] = {}
+    households: dict[str, Any] = {}
+    index: list[tuple[str, str, str, int]] = []
+
+    count = 0
+    for authority in authority_records:
+        modeled = implemented.get(authority["slug"])
+        if modeled is None:
+            continue
+        for profile in EARNINGS_PROFILES:
+            for earnings in EARNINGS_POINTS:
+                profile_at_earnings = {**profile, "adult_earnings": earnings}
+                for band in BANDS:
+                    person_rows, benunit_row, household_row, _ = build_household(
+                        count,
+                        modeled["enum"],
+                        band,
+                        authority["bands"][band],
+                        profile_at_earnings,
+                    )
+                    people.update(person_rows)
+                    benunits.update(benunit_row)
+                    households.update(household_row)
+                    index.append((authority["onsCode"], profile["id"], band, earnings))
+                    count += 1
+
+    simulation = SimulationBuilder().build_from_dict(
+        system,
+        {
+            "people": people,
+            "benunits": benunits,
+            "households": households,
+        },
+    )
+    reductions = simulation.calculate("council_tax_reduction", PERIOD)
+    net_bills = simulation.calculate("council_tax_less_benefit", PERIOD)
+    supported = simulation.calculate("council_tax_reduction_scheme_supported", PERIOD)
+
+    results: dict[tuple[str, str, str, int], dict[str, Any]] = {}
+    for position, key in enumerate(index):
+        _, _, band, _ = key
+        authority = authority_by_code[key[0]]
         results[key] = {
             "gross": authority["bands"][band],
             "reduction": as_float(reductions[position]),
@@ -372,6 +484,7 @@ def main() -> None:
     implemented = implemented_authorities(LocalAuthority)
     sources = parse_work_queue_sources()
     simulation_results = simulate_results(authority_records, implemented)
+    earnings_results = simulate_earnings_curves(authority_records, implemented)
 
     authorities = []
     for authority in authority_records:
@@ -389,6 +502,22 @@ def main() -> None:
             if profile_results:
                 results[scenario["id"]] = profile_results
 
+        earnings_curves: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        for profile in EARNINGS_PROFILES:
+            profile_curves = {}
+            for band in BANDS:
+                curve = []
+                for earnings in EARNINGS_POINTS:
+                    result = earnings_results.get(
+                        (authority["onsCode"], profile["id"], band, earnings)
+                    )
+                    if result is not None:
+                        curve.append({"earnings": earnings, **result})
+                if curve:
+                    profile_curves[band] = curve
+            if profile_curves:
+                earnings_curves[profile["id"]] = profile_curves
+
         authorities.append(
             {
                 **authority,
@@ -397,6 +526,7 @@ def main() -> None:
                 "schemeType": source.get("schemeType") if modeled else None,
                 "source": source.get("source") if modeled else None,
                 "results": results,
+                "earningsCurves": earnings_curves,
             }
         )
 
@@ -405,6 +535,7 @@ def main() -> None:
             "id": scenario["id"],
             "label": scenario["label"],
             "description": scenario["description"],
+            "earningsProfileId": scenario["earnings_profile_id"],
             "household": {
                 "adultEarnings": scenario["adult_earnings"],
                 "savings": scenario["savings"],
@@ -413,6 +544,19 @@ def main() -> None:
             },
         }
         for scenario in SCENARIOS
+    ]
+    earnings_profiles = [
+        {
+            "id": profile["id"],
+            "label": profile["label"],
+            "description": profile["description"],
+            "household": {
+                "savings": profile["savings"],
+                "children": len(profile["children_ages"]),
+                "wouldClaimUc": profile["would_claim_uc"],
+            },
+        }
+        for profile in EARNINGS_PROFILES
     ]
     dataset = {
         "metadata": {
@@ -427,6 +571,8 @@ def main() -> None:
             "modeledAuthorityCount": sum(1 for authority in authorities if authority["modeled"]),
         },
         "scenarios": scenarios,
+        "earningsProfiles": earnings_profiles,
+        "earningsPoints": EARNINGS_POINTS,
         "authorities": authorities,
     }
 

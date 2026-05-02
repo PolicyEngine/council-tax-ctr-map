@@ -1,6 +1,7 @@
 import type {
   AuthorityRecord,
   CouncilTaxBand,
+  EarningsCurvePoint,
   MapMetric,
   ScenarioBandResult,
 } from "@/lib/types";
@@ -65,6 +66,14 @@ export function getMetricValue(
   }
 
   return metric === "reduction" ? values.reduction : values.net;
+}
+
+export function getEarningsCurve(
+  authority: AuthorityRecord,
+  earningsProfileId: string,
+  band: CouncilTaxBand,
+): EarningsCurvePoint[] {
+  return authority.earningsCurves[earningsProfileId]?.[band] ?? [];
 }
 
 export function rankAuthorities(

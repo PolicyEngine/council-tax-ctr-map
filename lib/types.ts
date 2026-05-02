@@ -8,8 +8,20 @@ export interface ScenarioDefinition {
   id: string;
   label: string;
   description: string;
+  earningsProfileId: string;
   household: {
     adultEarnings: number;
+    savings: number;
+    children: number;
+    wouldClaimUc: boolean;
+  };
+}
+
+export interface EarningsProfileDefinition {
+  id: string;
+  label: string;
+  description: string;
+  household: {
     savings: number;
     children: number;
     wouldClaimUc: boolean;
@@ -23,9 +35,18 @@ export interface ScenarioBandResult {
   supported: boolean;
 }
 
+export interface EarningsCurvePoint extends ScenarioBandResult {
+  earnings: number;
+}
+
 export type AuthorityScenarioResults = Record<
   string,
   Partial<Record<CouncilTaxBand, ScenarioBandResult>>
+>;
+
+export type AuthorityEarningsCurves = Record<
+  string,
+  Partial<Record<CouncilTaxBand, EarningsCurvePoint[]>>
 >;
 
 export interface AuthorityRecord {
@@ -41,6 +62,7 @@ export interface AuthorityRecord {
   schemeType: string | null;
   source: string | null;
   results: AuthorityScenarioResults;
+  earningsCurves: AuthorityEarningsCurves;
 }
 
 export interface AuthorityDataset {
@@ -56,6 +78,8 @@ export interface AuthorityDataset {
     modeledAuthorityCount: number;
   };
   scenarios: ScenarioDefinition[];
+  earningsProfiles: EarningsProfileDefinition[];
+  earningsPoints: number[];
   authorities: AuthorityRecord[];
 }
 

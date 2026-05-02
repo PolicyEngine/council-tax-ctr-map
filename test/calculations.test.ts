@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { getBillValues, rankAuthorities } from "@/lib/calculations";
+import {
+  getBillValues,
+  getEarningsCurve,
+  rankAuthorities,
+} from "@/lib/calculations";
 import type { AuthorityRecord } from "@/lib/types";
 
 const modeledAuthority: AuthorityRecord = {
@@ -33,6 +37,26 @@ const modeledAuthority: AuthorityRecord = {
       },
     },
   },
+  earningsCurves: {
+    single_adult: {
+      D: [
+        {
+          earnings: 0,
+          gross: 1800,
+          reduction: 1200,
+          net: 600,
+          supported: true,
+        },
+        {
+          earnings: 20000,
+          gross: 1800,
+          reduction: 900,
+          net: 900,
+          supported: true,
+        },
+      ],
+    },
+  },
 };
 
 const grossOnlyAuthority: AuthorityRecord = {
@@ -44,6 +68,7 @@ const grossOnlyAuthority: AuthorityRecord = {
   localAuthorityEnum: null,
   source: null,
   results: {},
+  earningsCurves: {},
 };
 
 describe("bill value helpers", () => {
@@ -78,5 +103,24 @@ describe("bill value helpers", () => {
 
     expect(ranked).toHaveLength(1);
     expect(ranked[0].authority.authority).toBe("Modeled");
+  });
+
+  it("returns the generated earnings curve for a modeled profile and band", () => {
+    expect(getEarningsCurve(modeledAuthority, "single_adult", "D")).toEqual([
+      {
+        earnings: 0,
+        gross: 1800,
+        reduction: 1200,
+        net: 600,
+        supported: true,
+      },
+      {
+        earnings: 20000,
+        gross: 1800,
+        reduction: 900,
+        net: 900,
+        supported: true,
+      },
+    ]);
   });
 });
