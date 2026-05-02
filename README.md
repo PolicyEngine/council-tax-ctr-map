@@ -1,7 +1,9 @@
 # Council Tax and CTR Map
 
 PolicyEngine-style explorer for gross Council Tax and modeled Council Tax
-Reduction across English billing authorities.
+Reduction across English billing authorities. The app exposes full household
+inputs and falls back to generated oracle results unless a live PolicyEngine API
+is configured.
 
 ## Data Contract
 
@@ -13,7 +15,8 @@ The app is a static Next.js export. It reads generated files in `public/data`:
   filtered to the English billing authorities in MHCLG Table 9.
 
 Generated outputs come from `scripts/generate_static_data.py`; the frontend does
-not hardcode bill calculations.
+not hardcode bill calculations. For arbitrary household inputs, set
+`NEXT_PUBLIC_CTR_API_URL` to the Modal `/calculate` endpoint in `backend/`.
 
 Primary sources:
 
@@ -47,7 +50,7 @@ bun run build
 
 ## Live Backend Path
 
-The checked-in app is the independent static oracle. For arbitrary household
-inputs, deploy `backend/modal_app.py` as a Modal API and point the frontend at
-that service in a follow-up. Keep the generated scenarios as regression fixtures
-for PolicyEngine UK and Axiom.
+The checked-in app remains an independent static oracle. To calculate exact CTR
+for every household input in the form, deploy `backend/modal_app.py` and build
+with `NEXT_PUBLIC_CTR_API_URL=https://<modal-host>/calculate`. Keep the generated
+scenarios as regression fixtures for PolicyEngine UK and Axiom.

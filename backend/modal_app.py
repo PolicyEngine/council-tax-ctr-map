@@ -1,29 +1,27 @@
-"""Modal entrypoint sketch for live CTR calculations.
-
-This is not used by the static export. Deploy this separately once arbitrary
-household input needs to be served outside a local PolicyEngine UK worktree.
-"""
+"""Modal entrypoint for live CTR calculations."""
 
 from __future__ import annotations
 
 import modal
 
 
+POLICYENGINE_UK_SPEC = (
+    "git+https://github.com/PolicyEngine/policyengine-uk.git@codex/ctr-framework"
+)
+
 app = modal.App("policyengine-ctr-calculator")
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
+        "fastapi[standard]",
         "policyengine-core",
-        "git+https://github.com/PolicyEngine/policyengine-uk.git",
+        POLICYENGINE_UK_SPEC,
     )
 )
 
 
-@app.function(image=image)
-@modal.fastapi_endpoint(method="POST")
-def calculate(payload: dict) -> dict:
-    """Return CTR outputs for a PolicyEngine-compatible household payload."""
+def calculate_policyengine_payload(payload: dict) -> dict:
     from policyengine_core.simulations import SimulationBuilder
     from policyengine_uk import CountryTaxBenefitSystem
 
@@ -43,3 +41,29 @@ def calculate(payload: dict) -> dict:
             simulation.calculate("council_tax_less_benefit", period)[0]
         ),
     }
+
+
+@app.function(image=image)
+@modal.asgi_app()
+def web():
+    from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
+
+    api = FastAPI()
+    api.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "https://council-tax-ctr-map.vercel.app",
+            "http://localhost:3067",
+            "http://localhost:3000",
+        ],
+        allow_credentials=False,
+        allow_methods=["POST", "OPTIONS"],
+        allow_headers=["*"],
+    )
+
+    @api.post("/calculate")
+    def calculate(payload: dict) -> dict:
+        return calculate_policyengine_payload(payload)
+
+    return api

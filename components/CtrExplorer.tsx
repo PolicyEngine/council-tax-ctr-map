@@ -7,20 +7,17 @@ import {
   ChartContainer,
   DashboardShell,
   Header,
-  InputGroup,
-  InputPanel,
   MetricCard,
   PEBarChart,
   PELineChart,
   ResultsPanel,
-  SegmentedControl,
-  SelectInput,
   SidebarLayout,
   logos,
 } from "@policyengine/ui-kit";
 import { Calculator, ExternalLink, MapPinned } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { AuthorityMap } from "@/components/AuthorityMap";
+import { HouseholdInputForm } from "@/components/HouseholdInputForm";
 import {
   formatPounds,
   getBillValues,
@@ -28,21 +25,21 @@ import {
   rankAuthorities,
 } from "@/lib/calculations";
 import {
-  BANDS,
+  buildPolicyEnginePayload,
+  DEFAULT_HOUSEHOLD_INPUTS,
+  getEarningsProfileId,
+  getStaticScenarioId,
+  nearestEarningsCurvePoint,
+  totalAdultEarnings,
+  type CalculationResponse,
+} from "@/lib/household";
+import {
   type AuthorityDataset,
   type AuthorityRecord,
   type CouncilTaxBand,
   type GeoFeatureCollection,
   type MapMetric,
 } from "@/lib/types";
-
-const metricOptions = [
-  { label: "Net bill", value: "net" },
-  { label: "CTR", value: "reduction" },
-  { label: "Gross", value: "gross" },
-];
-
-const bandOptions = BANDS.map((band) => ({ label: band, value: band }));
 
 function formatEarnings(value: number) {
   return value === 0 ? "0" : `${Math.round(value / 1000)}k`;
@@ -100,12 +97,23 @@ function modeledAuthorities(authorities: AuthorityRecord[]) {
   return authorities.filter((authority) => authority.modeled);
 }
 
+function calculationApiUrl() {
+  return process.env.NEXT_PUBLIC_CTR_API_URL?.trim();
+}
+
 export function CtrExplorer() {
   const { dataset, geography, error } = useStaticData();
   const [selectedCode, setSelectedCode] = useState<string | null>(null);
-  const [scenarioId, setScenarioId] = useState("single_no_earnings");
   const [band, setBand] = useState<CouncilTaxBand>("D");
   const [metric, setMetric] = useState<MapMetric>("net");
+  const [householdInputs, setHouseholdInputs] = useState(
+    DEFAULT_HOUSEHOLD_INPUTS,
+  );
+  const [liveResult, setLiveResult] = useState<CalculationResponse | null>(null);
+  const [calculationStatus, setCalculationStatus] = useState<
+    "static" | "loading" | "live" | "error"
+  >("static");
+  const [calculationError, setCalculationError] = useState<string | null>(null);
 
   const authorities = useMemo(() => dataset?.authorities ?? [], [dataset]);
   const scenarios = useMemo(() => dataset?.scenarios ?? [], [dataset]);
@@ -127,22 +135,32 @@ export function CtrExplorer() {
     }
   }, [selectedAuthority, selectedCode]);
 
-  const selectedBill = selectedAuthority
-    ? getBillValues(selectedAuthority, scenarioId, band)
-    : null;
+  useEffect(() => {
+    if (!selectedAuthority) {
+      return;
+    }
+    setHouseholdInputs((previous) => ({
+      ...previous,
+      councilTax: selectedAuthority.bands[band],
+    }));
+  }, [band, selectedAuthority]);
 
-  const scenario = scenarios.find((item) => item.id === scenarioId);
-  const earningsProfile = earningsProfiles.find(
-    (profile) => profile.id === scenario?.earningsProfileId,
+  const staticScenarioId = useMemo(
+    () => getStaticScenarioId(householdInputs),
+    [householdInputs],
   );
-  const selectOptions = authorities.map((authority) => ({
-    label: authority.authority,
-    value: authority.onsCode,
-  }));
+  const earningsProfileId = useMemo(
+    () => getEarningsProfileId(householdInputs),
+    [householdInputs],
+  );
+  const staticScenario = scenarios.find((item) => item.id === staticScenarioId);
+  const earningsProfile = earningsProfiles.find(
+    (profile) => profile.id === earningsProfileId,
+  );
 
   const topAuthorities = useMemo(
     () =>
-      rankAuthorities(authorities, scenarioId, band, metric, {
+      rankAuthorities(authorities, staticScenarioId, band, metric, {
         modeledOnly: metric !== "gross",
       })
         .slice(0, 8)
@@ -150,23 +168,123 @@ export function CtrExplorer() {
           authority: item.authority.authority,
           value: Math.round(item.value ?? 0),
         })),
-    [authorities, band, metric, scenarioId],
+    [authorities, band, metric, staticScenarioId],
   );
 
   const earningsCurve = useMemo(() => {
-    if (!selectedAuthority || !scenario) {
+    if (!selectedAuthority) {
       return [];
     }
 
-    return getEarningsCurve(selectedAuthority, scenario.earningsProfileId, band).map(
-      (point) => ({
+    return getEarningsCurve(selectedAuthority, earningsProfileId, band);
+  }, [band, earningsProfileId, selectedAuthority]);
+
+  const earningsCurveChartData = useMemo(
+    () =>
+      earningsCurve.map((point) => ({
         earnings: point.earnings,
         earningsLabel: formatEarnings(point.earnings),
         net: Math.round(point.net),
         reduction: Math.round(point.reduction),
-      }),
+      })),
+    [earningsCurve],
+  );
+
+  const fallbackBill = useMemo(() => {
+    if (!selectedAuthority) {
+      return null;
+    }
+    const curvePoint = nearestEarningsCurvePoint(
+      earningsCurve,
+      totalAdultEarnings(householdInputs),
     );
-  }, [band, scenario, selectedAuthority]);
+    if (curvePoint && selectedAuthority.modeled) {
+      const gross = householdInputs.councilTax || curvePoint.gross;
+      return {
+        gross,
+        reduction: curvePoint.reduction,
+        net: Math.max(0, gross - curvePoint.reduction),
+        modeled: true,
+        supported: curvePoint.supported,
+      };
+    }
+    return getBillValues(selectedAuthority, staticScenarioId, band);
+  }, [
+    band,
+    earningsCurve,
+    householdInputs,
+    selectedAuthority,
+    staticScenarioId,
+  ]);
+
+  const selectedBill =
+    liveResult && fallbackBill
+      ? {
+          gross: liveResult.council_tax,
+          reduction: liveResult.council_tax_reduction,
+          net: liveResult.council_tax_less_benefit,
+          modeled: true,
+          supported: true,
+        }
+      : fallbackBill;
+
+  useEffect(() => {
+    const apiUrl = calculationApiUrl();
+    const localAuthorityEnum = selectedAuthority?.localAuthorityEnum;
+    if (!apiUrl || !selectedAuthority?.modeled || !localAuthorityEnum) {
+      setLiveResult(null);
+      setCalculationStatus("static");
+      setCalculationError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      try {
+        setCalculationStatus("loading");
+        setCalculationError(null);
+        const response = await fetch(apiUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(
+            buildPolicyEnginePayload(
+              householdInputs,
+              localAuthorityEnum,
+              band,
+            ),
+          ),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Live calculation failed with ${response.status}`);
+        }
+
+        const result = (await response.json()) as CalculationResponse;
+        if (!controller.signal.aborted) {
+          setLiveResult(result);
+          setCalculationStatus("live");
+        }
+      } catch (calculationFailure) {
+        if (!controller.signal.aborted) {
+          setLiveResult(null);
+          setCalculationStatus("error");
+          setCalculationError(
+            calculationFailure instanceof Error
+              ? calculationFailure.message
+              : "Live calculation failed.",
+          );
+        }
+      }
+    }, 450);
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [band, householdInputs, selectedAuthority]);
 
   if (error) {
     return (
@@ -224,64 +342,19 @@ export function CtrExplorer() {
 
       <SidebarLayout
         className="min-h-[calc(100vh-var(--spacing-header))] bg-background-secondary"
-        sidebarWidth="330px"
+        sidebarWidth="430px"
         sidebar={
-          <InputPanel title="Household and bill">
-            <div className="flex flex-col gap-5">
-              <InputGroup label="Authority">
-                <SelectInput
-                  aria-label="Select authority"
-                  options={selectOptions}
-                  value={selectedAuthority.onsCode}
-                  onChange={setSelectedCode}
-                />
-              </InputGroup>
-
-              <InputGroup label="Council tax band">
-                <SegmentedControl
-                  value={band}
-                  onValueChange={(value) => setBand(value as CouncilTaxBand)}
-                  options={bandOptions}
-                  size="xs"
-                />
-              </InputGroup>
-
-              <InputGroup label="Household scenario">
-                <SelectInput
-                  aria-label="Select household scenario"
-                  options={scenarios.map((item) => ({
-                    label: item.label,
-                    value: item.id,
-                  }))}
-                  value={scenarioId}
-                  onChange={setScenarioId}
-                />
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {scenario?.description}
-                </p>
-              </InputGroup>
-
-              <InputGroup label="Map metric">
-                <SegmentedControl
-                  value={metric}
-                  onValueChange={(value) => setMetric(value as MapMetric)}
-                  options={metricOptions}
-                  size="xs"
-                />
-              </InputGroup>
-
-              <div className="rounded-md border border-border bg-background p-4">
-                <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                  <Calculator className="h-4 w-4" />
-                  Generated from PolicyEngine UK
-                </div>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {dataset.metadata.modeledAuthorityCount} modeled CTR schemes out of{" "}
-                  {dataset.metadata.totalAuthorityCount} English billing authorities.
-                </p>
-              </div>
-            </div>
-          </InputPanel>
+          <HouseholdInputForm
+            authorities={authorities}
+            selectedAuthority={selectedAuthority}
+            band={band}
+            metric={metric}
+            inputs={householdInputs}
+            onAuthorityChange={setSelectedCode}
+            onBandChange={setBand}
+            onMetricChange={setMetric}
+            onInputsChange={setHouseholdInputs}
+          />
         }
       >
         <main className="flex min-h-full flex-col gap-5 p-5">
@@ -317,7 +390,7 @@ export function CtrExplorer() {
                 geography={geography}
                 authorities={authorities}
                 selectedCode={selectedAuthority.onsCode}
-                scenarioId={scenarioId}
+                scenarioId={staticScenarioId}
                 band={band}
                 metric={metric}
                 onSelect={setSelectedCode}
@@ -341,12 +414,21 @@ export function CtrExplorer() {
                   value={formatPounds(selectedBill.net)}
                   format="string"
                   trend={selectedBill.modeled ? "neutral" : "negative"}
-                  delta={selectedBill.modeled ? "Modeled" : "CTR pending"}
+                  delta={
+                    calculationStatus === "live"
+                      ? "Live PE"
+                      : selectedBill.modeled
+                        ? "Static oracle"
+                        : "CTR pending"
+                  }
                 />
               </div>
 
               <div className="rounded-md border border-border bg-background p-4">
-                <h2 className="text-base font-semibold">Scheme path</h2>
+                <div className="flex items-center gap-2">
+                  <Calculator className="h-4 w-4 text-primary" />
+                  <h2 className="text-base font-semibold">Scheme path</h2>
+                </div>
                 <dl className="mt-3 grid grid-cols-[120px_1fr] gap-x-3 gap-y-2 text-sm">
                   <dt className="text-muted-foreground">Enum</dt>
                   <dd>{selectedAuthority.localAuthorityEnum ?? "Not in CTR PR"}</dd>
@@ -354,20 +436,36 @@ export function CtrExplorer() {
                   <dd>{selectedAuthority.schemeType ?? "Awaiting implementation"}</dd>
                   <dt className="text-muted-foreground">Output</dt>
                   <dd>
-                    {selectedBill.modeled
-                      ? "PolicyEngine CTR result"
-                      : "Official gross council tax only"}
+                    {calculationStatus === "live"
+                      ? "Live PolicyEngine result"
+                      : selectedBill.modeled
+                        ? "Generated static result"
+                        : "Official gross council tax only"}
                   </dd>
+                  <dt className="text-muted-foreground">Fallback</dt>
+                  <dd>{staticScenario?.label ?? "Generated oracle"}</dd>
+                  {calculationStatus === "loading" ? (
+                    <>
+                      <dt className="text-muted-foreground">Status</dt>
+                      <dd>Calculating</dd>
+                    </>
+                  ) : null}
+                  {calculationStatus === "error" ? (
+                    <>
+                      <dt className="text-muted-foreground">Status</dt>
+                      <dd>{calculationError}</dd>
+                    </>
+                  ) : null}
                 </dl>
               </div>
 
               <ChartContainer
                 title="Earnings variation"
-                subtitle={`Band ${band}, ${earningsProfile?.label ?? scenario?.label ?? ""}`}
+                subtitle={`Band ${band}, ${earningsProfile?.label ?? staticScenario?.label ?? ""}`}
               >
-                {earningsCurve.length > 0 ? (
+                {earningsCurveChartData.length > 0 ? (
                   <PELineChart
-                    data={earningsCurve}
+                    data={earningsCurveChartData}
                     xKey="earningsLabel"
                     series={[
                       {
@@ -396,7 +494,7 @@ export function CtrExplorer() {
 
               <ChartContainer
                 title={metric === "gross" ? "Highest gross bills" : "Highest modeled values"}
-                subtitle={`Band ${band}, ${scenario?.label ?? ""}`}
+                subtitle={`Band ${band}, ${staticScenario?.label ?? ""}`}
               >
                 <PEBarChart
                   data={topAuthorities}
