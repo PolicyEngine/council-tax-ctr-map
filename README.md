@@ -1,36 +1,53 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Council Tax and CTR Map
 
-## Getting Started
+PolicyEngine-style explorer for gross Council Tax and modeled Council Tax
+Reduction across English billing authorities.
 
-First, run the development server:
+## Data Contract
+
+The app is a static Next.js export. It reads generated files in `public/data`:
+
+- `authority-results.json`: MHCLG 2026-27 council tax bands plus PolicyEngine UK
+  CTR outputs for modeled authorities and household scenarios.
+- `england-local-authorities.geojson`: ONS Local Authority District boundaries
+  filtered to the English billing authorities in MHCLG Table 9.
+
+Generated outputs come from `scripts/generate_static_data.py`; the frontend does
+not hardcode bill calculations.
+
+Primary sources:
+
+- MHCLG, Council Tax levels set by local authorities in England 2026 to 2027:
+  https://www.gov.uk/government/statistics/council-tax-levels-set-by-local-authorities-in-england-2026-to-2027
+- ONS Local Authority Districts December 2024 boundaries, UK BGC:
+  https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/Local_Authority_Districts_December_2024_Boundaries_UK_BGC/FeatureServer
+
+## Development
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+bun install
+bun run generate:data
+bun run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+By default the generator reads the CTR worktree at
+`/Users/maxghenis/pr-worktrees/policyengine-uk-1534-ctr`. Override it with:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+POLICYENGINE_UK_PATH=/path/to/policyengine-uk bun run generate:data
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Verification
 
-## Learn More
+```bash
+bun run lint
+bun run test
+bun run build
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Live Backend Path
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The checked-in app is the independent static oracle. For arbitrary household
+inputs, deploy `backend/modal_app.py` as a Modal API and point the frontend at
+that service in a follow-up. Keep the generated scenarios as regression fixtures
+for PolicyEngine UK and Axiom.
