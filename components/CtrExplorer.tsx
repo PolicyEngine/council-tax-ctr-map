@@ -12,7 +12,6 @@ import {
   PELineChart,
   ResultsPanel,
   SidebarLayout,
-  logos,
 } from "@policyengine/ui-kit";
 import { Calculator, ExternalLink, MapPinned } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -320,25 +319,15 @@ export function CtrExplorer() {
 
   return (
     <DashboardShell>
+      {/* TODO(ui-kit-migration): re-add header subtitle "Council Tax and CTR Map" when Header supports children/title prop */}
       <Header
-        variant="dark"
-        logo={
-          <img
-            src={logos.whiteWordmark}
-            alt="PolicyEngine"
-            className="h-5 w-auto"
-          />
-        }
-        navLinks={[
+        navItems={[
           {
-            slug: "source",
-            text: "Sources",
+            label: "Sources",
             href: dataset.metadata.councilTaxSourcePage,
           },
         ]}
-      >
-        <span className="text-sm font-medium">Council Tax and CTR Map</span>
-      </Header>
+      />
 
       <SidebarLayout
         className="min-h-[calc(100vh-var(--spacing-header))] bg-background-secondary"
