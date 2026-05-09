@@ -12,11 +12,11 @@
     "verify": "bun run lint && bun run test && bun run build"
   },
   "dependencies": {
-    "@policyengine/ui-kit": "^0.8.1",
+    "@policyengine/ui-kit": "^0.9.0",
     "clsx": "^2.1.1",
     "d3-geo": "^3.1.1",
     "lucide-react": "^1.14.0",
-    "next": "^16.2.4",
+    "next": "^16.2.6",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "recharts": "^3.8.1",
